@@ -3,7 +3,9 @@
 
 import argparse
 import json
+import yaml
 import pprint
+import datetime
 
 
 class object_registry(object):
@@ -49,7 +51,7 @@ def do_header(d):
     """Output a stock header for the new Python script and also try to
     figure out the Resource imports needed by the template.
     """
-    print 'from troposphere import Base64, Select, FindInMap, GetAtt, GetAZs, Join, Output, If, And, Not, Or, Equals, Condition'
+    print 'from troposphere import Base64, Select, FindInMap, Sub, GetAtt, GetAZs, Join, Output, If, And, Not, Or, Equals, Condition'
     print 'from troposphere import Parameter, Ref, Tags, Template'
     print 'from troposphere.cloudformation import Init'
     print 'from troposphere.cloudfront import Distribution, DistributionConfig'
@@ -237,9 +239,9 @@ def do_resources(d):
         for p in filter(lambda x: v.has_key(x), ['Metadata', 'Properties']):
             for pk, pv in v[p].items():
                 if pk == "Tags":
-                    print '    Tags=Tags('
+                    print '    tags = {'
                     for d in pv:
-                        print "        %s=%s," % (
+                        print "        '%s': '%s'," % (
                             d['Key'], output_value(d['Value']))
                     print '    ),'
                 elif pk == 'PortRange':
@@ -292,7 +294,6 @@ function_map = {
     'Condition': ("Condition", handle_one_object),
 }
 
-
 def output_value(v):
     """Output a value which may be a string or a set of function calls."""
     if isinstance(v, basestring):
@@ -303,6 +304,8 @@ def output_value(v):
         return '%d' % (v)
     elif isinstance(v, list):
         return "[" + ", ".join(map(output_value, v)) + "]"
+    elif isinstance(v, datetime.date):
+        return str(v)
 
     out = []
     # Should only be one of these...
@@ -334,15 +337,43 @@ def do_outputs(d):
 
 def do_trailer(d):
     """Output a trailer section for the new Python script."""
-    print 'print(t.to_json())'
+    print 'print(t.to_yaml())'
+
+#
+def intrinsics_constructor(loader, node):
+  if (type(node) == yaml.constructor.ScalarNode):
+    node.value = loader.construct_scalar(node)
+  elif (type(node) == yaml.constructor.SequenceNode):
+    node.value = loader.construct_sequence(node)
+  elif (type(node) == yaml.constructor.MappingNode):
+    node.value = loader.construct_mapping(node)
+
+  if (node.tag == u'!Ref'):
+    node.tag = node.tag.replace(u'!', '')
+  else:
+    node.tag = node.tag.replace(u'!', u'Fn::')
+
+  return list((node.tag, node.value))
+
+funcnames = [ 'Ref', 'Base64', 'FindInMap', 'GetAtt', 'GetAZs', 'ImportValue',
+              'Join', 'Select', 'Split', 'Split', 'Sub', 'And', 'Equals', 'If',
+              'Not', 'Or' ]
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("filename", help="template to convert")
+    parser.add_argument("-yaml", action="store_true")
     args = parser.parse_args()
 
-    d = json.load(open(args.filename))
+    d = None
+    if args.yaml:
+        for func in funcnames:
+          yaml.SafeLoader.add_constructor(u'!' + func, intrinsics_constructor)
+
+        d = yaml.safe_load(open(args.filename))
+    else:
+        d = json.load(open(args.filename))
 
     do_header(d)
 
